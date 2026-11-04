@@ -1,0 +1,30 @@
+# Core Framework & Config
+pydantic>=2.8.0
+pydantic-settings>=2.4.0
+loguru>=0.7.2
+httpx>=0.27.0
+numpy>=1.26.0
+psutil>=5.9.0
+
+# Vision & OCR
+mss>=9.0.1
+Pillow>=10.4.0
+# paddleocr>=2.7.3
+# paddlepaddle>=2.6.0
+
+# Desktop Control
+pyautogui>=0.9.54
+pynput>=1.7.7
+PyGetWindow>=0.0.9
+
+# UI
+customtkinter>=5.2.2
+
+# LLM Fallback backends (optional/as needed)
+# llama-cpp-python>=0.2.80
+# transformers>=4.40.0
+# torch>=2.2.0
+
+# Testing
+pytest>=8.3.0
+pytest-asyncio>=0.23.8

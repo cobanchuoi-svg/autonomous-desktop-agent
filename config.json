@@ -1,0 +1,42 @@
+{
+  "app_name": "Desktop AI Agent",
+  "version": "1.0.0",
+  "environment": "development",
+  "capture_interval": 1.0,
+  "ocr_engine": "hybrid",
+  "max_retries": 3,
+  "memory_limit": 50,
+  "teacher_enabled": true,
+  "gemini_cli_enabled": false,
+  "gemini_cli_timeout": 45.0,
+  "gemini_cli_model": "flash",
+  "db_path": "agent/memory/memory.db",
+  "log_level": "INFO",
+  "llm": {
+    "provider": "gemini",
+    "model_name": "gemini-2.5-flash",
+    "ollama_model": "qwen2.5:3b",
+    "ollama_base_url": "http://127.0.0.1:11434",
+    "llamacpp_model_path": "",
+    "hf_model_id": "Qwen/Qwen2-1.5B-Instruct",
+    "temperature": 0.2,
+    "max_tokens": 1024,
+    "request_timeout": 30.0
+  },
+  "safety": {
+    "strict_mode": true,
+    "require_approval_for_delete": true,
+    "require_approval_for_executables": true,
+    "require_approval_for_admin": true,
+    "blocked_keywords": [
+      "format",
+      "reg add",
+      "reg delete",
+      "diskpart",
+      "rmdir /s /q c:\\",
+      "rmdir /s /q c:\\windows",
+      "drop table",
+      "delete from users"
+    ]
+  }
+}
