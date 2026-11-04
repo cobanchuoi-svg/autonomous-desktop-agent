@@ -10,6 +10,8 @@ from agent.vision.capture import ScreenCapture
 from agent.vision.ocr import OCRProcessor, PADDLE_AVAILABLE
 from agent.vision.ocr_worker import _ocr_subprocess_worker, IsolatedOCRClient
 from agent.vision.parser import UIElement, find_elements_by_text
+from agent.vision.roi import ScreenRegion, crop_region, translate_elements
+from agent.vision.window_surface import WindowSurface, WindowSurfaceDetector
 
 
 def test_screen_capture_and_dimensions():
@@ -29,6 +31,28 @@ def test_ui_element_bounding_box_center():
     assert element.center_x == 150
     assert element.center_y == 225
     assert element.bbox == (100, 200, 200, 250)
+
+
+def test_roi_crop_translates_ocr_coordinates_to_screen_coordinates():
+    image = Image.new("RGB", (300, 200), color="white")
+    crop, region = crop_region(image, ScreenRegion(50, 40, 250, 180))
+    assert crop.size == (200, 140)
+    local = UIElement(text="Open", bbox=(10, 20, 50, 40), center_x=30, center_y=30)
+    translated = translate_elements(
+        [local], region, surface="popup", container_id="hwnd_abc"
+    )[0]
+    assert translated.bbox == (60, 60, 100, 80)
+    assert (translated.center_x, translated.center_y) == (80, 70)
+    assert translated.surface == "popup"
+    assert translated.container_id == "hwnd_abc"
+
+
+def test_foreground_window_elements_are_not_labelled_as_desktop():
+    element = UIElement(text="Save", bbox=(10, 10, 50, 30), center_x=30, center_y=20)
+    surface = WindowSurface("hwnd_1", "Document", (0, 0, 100, 100), is_popup=False)
+    tagged = WindowSurfaceDetector.tag_elements([element], surface)[0]
+    assert tagged.surface == "foreground_window"
+    assert tagged.container_id == "hwnd_1"
 
 
 def test_find_elements_by_text():

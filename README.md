@@ -1,105 +1,186 @@
-# Desktop AI Agent 🤖
+# Desktop AI Agent
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%20%7C%203.11%20%7C%203.12-blue.svg)](https://www.python.org/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Platform: Windows 10/11](https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6.svg)](https://microsoft.com)
-[![Tests Passing](https://img.shields.io/badge/tests-21%2F21%20passing-brightgreen.svg)](tests/)
-[![OCR: Native WinRT (16ms)](https://img.shields.io/badge/OCR-Windows%20Native%2016ms-orange.svg)](agent/vision/windows_ocr.py)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue)](https://www.python.org/)
+[![Platform](https://img.shields.io/badge/Platform-Windows%2010%2F11-0078D6)](https://www.microsoft.com/windows)
+[![License](https://img.shields.io/badge/License-MIT-yellow)](LICENSE)
+[![Tests](https://img.shields.io/badge/Tests-pytest-blue)](tests/)
 
-An autonomous Windows Desktop AI Agent featuring a responsive Chat Dashboard, **16ms Ultra-Fast Native OCR**, **Hybrid Gemini Multimodal Vision**, deterministic **Finite State Machine (FSM)** action execution, and **Human-in-the-Loop Safety Sandboxing**.
+An experimental Windows desktop agent built around a simple principle:
 
----
+> **Route the request first. Use perception only when desktop context is actually needed.**
 
-## 🌟 Key Highlights
+The project combines deterministic workflows, local Windows OCR, UI Automation, coordinate-aware elements, and an optional LLM router. It is a learning/research project, not a replacement for a general-purpose commercial computer-use system.
 
-- ⚡ **Zero-GPU Ultra-Fast Native OCR (16-25ms)**: Uses `Windows.Media.Ocr` (WinRT). Replaced heavy PaddleOCR, achieving a **10,000x speedup** on standard CPU with zero heavy AI model downloads.
-- 👁️ **Hybrid Multimodal Vision Fallback**: Automatically invokes Gemini 2.0 / 3.8 Flash Multimodal Vision when UI elements are complex, artistic, or unreadable by local OCR.
-- 🧠 **Deterministic FSM Architecture**: Replaces fragile `while-true` loops with an auditable Finite State Machine (`OBSERVE` ➔ `PLAN` ➔ `ACT` ➔ `VERIFY` ➔ `RECOVER`).
-- 🛡️ **Human-in-the-Loop Safety Sandbox**: Complex or dynamic scripts are presented as interactive drafts; user must explicitly confirm (`run` / `approve`) before any code executes.
-- 💬 **Bilingual Natural Interaction**: Native support for English and Vietnamese conversational commands and desktop workflows.
+## What it can do
 
----
+- Route English and Vietnamese requests to registered workflows.
+- Open supported applications and search the web.
+- Read visible screen text using Windows Media OCR.
+- Represent OCR/UI Automation output as text elements with screen coordinates.
+- Distinguish elements belonging to the foreground window, a popup, or the desktop.
+- Generate text and enter it into supported text editors.
+- Use the existing FSM only for complex multi-step desktop tasks.
+- Create draft scripts for unknown tasks, requiring explicit approval before execution.
 
-## 🚀 Quickstart (30 Seconds)
+## How it works
 
-### 1. Clone & Install
-```powershell
-git clone https://github.com/your-username/desktop-ai-agent.git
-cd desktop-ai-agent
-
-# Create and activate virtual environment
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-
-# Install lightweight dependencies
-pip install -r requirements.txt
+```text
+User message
+    │
+    ▼
+Workflow Router ──► CHAT / OPEN_APP / WEB_SEARCH / WRITE_TEXT_TO_APP / READ_SCREEN
+    │
+    └──► FSM_TASK only when a task requires multi-step desktop interaction
+                 │
+                 ▼
+        Screenshot → foreground window / popup surface → OCR + UI Automation
+                 │
+                 ▼
+      UI elements: { text, bbox, surface, container_id, element_id }
+                 │
+                 ▼
+          LLM selects an allowed element/action
+                 │
+                 ▼
+      CoordinateRegistry resolves element_id → screen coordinate → action
 ```
 
-### 2. Configure Your LLM
-Create `config.local.json` (automatically protected by `.gitignore`):
+### Perception model
+
+`Windows.Media.Ocr` is the default local OCR engine. It returns text and word bounding boxes without a GPU or a large model download.
+
+Elements are tagged with a surface:
+
+| Surface | Meaning |
+| --- | --- |
+| `foreground_window` | Belongs to the active application window. |
+| `popup` | Belongs to the active dialog, menu, or popup window. |
+| `desktop` | Screen-level content such as taskbar/background. |
+
+The ROI helpers keep crop offsets. OCR can run on a window or popup crop while resulting coordinates still map back to the full desktop correctly.
+
+```text
+Full screenshot
+    → choose active-window / popup region
+    → crop ROI
+    → OCR local coordinates
+    → add crop offset
+    → click-safe desktop coordinates
+```
+
+Gemini Vision is an optional fallback for cases where local text OCR cannot locate the requested element. It is not intended to run on every observation.
+
+## Quick start
+
+### 1. Install
+
+```powershell
+git clone https://github.com/cobanchuoi-svg/myfistproject.git
+cd desktop-ai-agent
+
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+python -m pip install -r requirements.txt
+```
+
+Windows OCR uses Python/WinRT namespaces declared in `requirements.txt`. Your Windows installation must also have at least one OCR language pack installed.
+
+### 2. Select an LLM
+
+The project supports an optional cloud Gemini provider and local Ollama.
+
+For local Ollama:
+
+```powershell
+ollama pull qwen2.5:3b
+ollama serve
+```
+
+Then use a local override file named `config.local.json`:
+
 ```json
 {
   "llm": {
-    "provider": "gemini",
-    "model_name": "gemini-3.8-flash",
-    "gemini_api_key": "YOUR_GEMINI_API_KEY"
+    "provider": "ollama",
+    "ollama_model": "qwen2.5:3b"
   }
 }
 ```
 
-> **💡 Model Selection Note:** Google AI Studio regularly rolls out newer model versions (e.g., `gemini-3.8-flash`, `gemini-flash-latest`, `gemini-2.5-pro`). You can freely change `"model_name"` in your `config.local.json` to whichever model is active in your region/account. The agent also includes built-in auto-recovery to gracefully migrate if an older model is deprecated.
->
-> *(Or use 100% offline private local models via [Ollama](https://ollama.com/) with `ollama pull qwen2.5:3b`)*.
+For Gemini, put the API key in `config.local.json` or set `GEMINI_API_KEY`. Do not commit either option.
 
-### 3. Launch GUI Dashboard
+### 3. Start the chat UI
+
 ```powershell
 python -m agent.main --gui
 ```
 
----
+Example requests:
 
-## 🏗️ Architecture
-
-```
-User Voice / Text Request
-          │
-          ▼
-   [Workflow Router] ◄────► [Gemini 3.8 Flash / Ollama]
-          │
-    ┌─────┴────────────────────────┐
-    ▼                              ▼
-(Fast Path Workflows)       (Complex Multi-Step FSM)
-- Open Applications         - OBSERVE (Native WinRT OCR 16ms)
-- Web Search (Google)       - FALLBACK (Gemini Multimodal Vision)
-- Text Injection to Windows - PLAN (Action Sequence)
-- Screen Reading            - ACT (Win32 / PyAutoGUI mouse & keys)
-                            - VERIFY (Visual & Process state checks)
+```text
+Open Chrome
+Search tin tức mới nhất
+Read text on screen
+Mở Notepad và viết một đoạn văn tả con mèo
 ```
 
----
+## Safety model
 
-## 🧪 Testing
+- Registered workflows use an allow-list and validate required parameters.
+- Coordinates come from the current `CoordinateRegistry` and screen hash; stale elements are rejected.
+- Actions requiring approval are blocked by `ActionDispatcher` until a workflow obtains explicit user consent.
+- Dynamic Python scripts are saved as drafts and only run after `run` / `/run` approval.
+- Destructive command patterns are blocked by the safety guard.
 
-Run the full automated test suite:
+## Learning without autonomous self-modification
+
+The agent can learn from outcomes in a controlled way:
+
+```text
+Task → action result → memory / lesson → better future routing or proposal
+```
+
+For example, it can retain an action history, record a failure pattern, or draft a workflow/script for a task that is not yet supported. A draft is not active automatically: the user must review and explicitly approve it.
+
+The agent does **not** silently edit Python source files, install dependencies, change configuration, commit code, or push to GitHub. Changes to the project follow a deliberate human-in-the-loop process:
+
+```text
+Agent proposes a change
+    → user reviews and approves it
+    → implementation is tested
+    → user commits the verified change
+```
+
+This keeps learning useful without giving an experimental desktop agent unchecked control over the codebase or the machine.
+
+## Development commands
+
 ```powershell
+# Check configured capture, OCR, database, and LLM backends
+python -m agent.main --check
+
+# Run tests
 python -m pytest tests
 ```
-*All 21 unit tests cover configuration precedence, actions, FSM transitions, Windows Native OCR, and Hybrid Vision fallback.*
 
----
+## Current limitations
 
-## 💖 Support & Sponsorship
+- Windows OCR is fast for readable UI text, but does not understand icons or overall layout.
+- OCR language quality depends on installed Windows OCR language packs and visible font size.
+- Text-entry verification confirms foreground focus and visible screen change; it cannot always read the exact final editor content through Windows UI Automation.
+- `Stop` is cooperative: it cannot instantly interrupt an already-running native OCR, PowerShell UIA probe, or keyboard injection.
+- Gemini Vision adds latency, cost, and network dependency, so it remains an exceptional fallback.
+- This project is experimental. Test only with non-sensitive windows and data.
 
-This project is an independent open-source research initiative on **Embodied Desktop AI Agents & Hierarchical Action Policies**. If you find this project useful or would like to support ongoing development, please consider sponsoring:
+## Next roadmap
 
-- ⭐ **Star this repository** on GitHub!
-- ☕ **Buy Me a Coffee**: [buymeacoffee.com/yourname](https://buymeacoffee.com)
-- 💳 **PayPal**: [paypal.me/yourname](https://paypal.me)
-- 🏦 **Vietnam Banking / Momo**: *(Update your payment details here)*
-- 🤝 **Corporate Sponsorship / Research Collaboration**: Open for Master's/PhD lab collaboration and grants.
+- ROI selection from foreground-window and popup bounds.
+- Screen/ROI hashing and OCR cache for unchanged screens.
+- Better popup classification and container-aware target selection.
+- Quality-based vision fallback when local OCR is insufficient, not merely empty.
+- Stronger text-entry verification where an application exposes accessible document text.
+- Benchmarks for screenshot capture, OCR, UI Automation, routing, and action verification.
 
----
+## License
 
-## 📄 License
-
-Distributed under the **MIT License**. See [LICENSE](LICENSE) for more information.
+Released under the [MIT License](LICENSE).

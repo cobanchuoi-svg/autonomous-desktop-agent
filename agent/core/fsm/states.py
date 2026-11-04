@@ -67,6 +67,19 @@ class ObserveState(BaseState):
             ocr_result, accessible_elements = await asyncio.gather(
                 read_ocr(), read_accessibility()
             )
+            # OCR may be fast while the PowerShell/UIA probe is slow.  Record
+            # the two timings separately so observation latency is diagnosable.
+            timings = context.benchmark.snapshot()
+            ocr_seconds = timings.get("ocr_total", 0.0)
+            uia_seconds = timings.get("uia_perception", 0.0)
+            logger.debug(
+                f"[ObserveState] perception timing: OCR={ocr_seconds:.3f}s UIA={uia_seconds:.3f}s"
+            )
+            if uia_seconds > 0.75:
+                logger.warning(
+                    f"[ObserveState] UI Automation was slow ({uia_seconds:.3f}s); "
+                    f"OCR was {ocr_seconds:.3f}s."
+                )
             context.ocr_result = ocr_result
             context.screen_text = ocr_result.get("full_text", "")
             context.desktop_state = context.desktop_state_manager.update(

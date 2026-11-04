@@ -56,6 +56,18 @@ def test_action_dispatcher_wait():
     assert result.action_type == ActionType.WAIT
 
 
+def test_action_dispatcher_does_not_execute_when_approval_is_required():
+    """Dispatcher cannot treat a warning log as user consent."""
+    dispatcher = ActionDispatcher()
+    command = ActionCommand(
+        action_type=ActionType.WRITE_FILE,
+        params={"path": "safe.txt", "content": "rm temporary-file"},
+    )
+    result = dispatcher.dispatch(command)
+    assert result.success is False
+    assert result.data == {"approval_required": True}
+
+
 def test_windows_app_resolver_finds_chrome_and_notepad():
     from agent.actions.application import WindowsAppResolver
     resolver = WindowsAppResolver()

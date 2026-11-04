@@ -40,6 +40,17 @@ class ActionDispatcher(BaseActionDispatcher):
 
         if requires_approval:
             logger.warning(f"[ActionDispatcher] Action requires user approval: {command}")
+            # A dispatcher has no UI channel through which to obtain consent.
+            # Returning without executing is safer than treating a log line as
+            # approval.  Workflows that need approval must collect it first
+            # (as ScriptManager does) and then submit a new approved action.
+            return ActionResult(
+                success=False,
+                action_type=command.action_type,
+                error=f"User approval required: {reason}",
+                execution_time=time.perf_counter() - start,
+                data={"approval_required": True},
+            )
 
         # 2. Routing to corresponding controller
         p = command.params

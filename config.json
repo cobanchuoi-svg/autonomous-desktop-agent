@@ -14,7 +14,7 @@
   "log_level": "INFO",
   "llm": {
     "provider": "gemini",
-    "model_name": "gemini-2.5-flash",
+    "model_name": "gemini-3.8-flash",
     "ollama_model": "qwen2.5:3b",
     "ollama_base_url": "http://127.0.0.1:11434",
     "llamacpp_model_path": "",

@@ -11,6 +11,7 @@ from PIL import Image
 from agent.core.exceptions import OCRException, OCRUnavailableError
 from agent.vision.base import BaseOCRProcessor
 from agent.vision.parser import UIElement, find_elements_by_text
+from agent.vision.roi import ScreenRegion, crop_region, translate_elements
 from agent.logger import logger
 
 try:
@@ -154,3 +155,29 @@ class WindowsMediaOCRProcessor(BaseOCRProcessor):
         data = self.extract_text(image)
         elements = data.get("elements", [])
         return find_elements_by_text(elements, query)
+
+    def extract_region(
+        self,
+        image: Image.Image,
+        region: ScreenRegion,
+        *,
+        surface: str = "foreground_window",
+        container_id: str | None = None,
+        window_title: str | None = None,
+    ) -> Dict[str, Any]:
+        """OCR one ROI while returning element boxes in desktop coordinates."""
+        cropped, actual_region = crop_region(image, region)
+        data = self.extract_text(cropped)
+        data["elements"] = translate_elements(
+            data.get("elements", []), actual_region,
+            surface=surface,
+            container_id=container_id,
+            window_title=window_title,
+        )
+        data["roi"] = {
+            "left": actual_region.left,
+            "top": actual_region.top,
+            "right": actual_region.right,
+            "bottom": actual_region.bottom,
+        }
+        return data

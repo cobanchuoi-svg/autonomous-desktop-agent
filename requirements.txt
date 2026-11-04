@@ -9,6 +9,12 @@ psutil>=5.9.0
 # Vision & OCR
 mss>=9.0.1
 Pillow>=10.4.0
+# Native Windows OCR namespaces used by agent/vision/windows_ocr.py.
+# Keep these Windows-only so non-Windows contributors can still install the project.
+winrt-Windows.Media.Ocr>=3.1.0; platform_system == "Windows"
+winrt-Windows.Graphics.Imaging>=3.1.0; platform_system == "Windows"
+winrt-Windows.Storage.Streams>=3.1.0; platform_system == "Windows"
+winrt-Windows.Globalization>=3.1.0; platform_system == "Windows"
 # paddleocr>=2.7.3
 # paddlepaddle>=2.6.0
 

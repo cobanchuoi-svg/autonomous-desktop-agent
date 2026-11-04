@@ -113,13 +113,15 @@ async def main_async(args):
             sys.exit(1)
         return
 
-    # Refuse autonomous execution if OCR is unavailable to prevent hallucinations
-    from agent.vision.ocr import OCRProcessor
-    if not OCRProcessor.is_available():
+    # Validate the OCR backend selected in config.  Do not hard-code PaddleOCR:
+    # the default backend is the Windows OCR/Gemini hybrid.
+    from agent.vision.factory import create_ocr_processor
+    ocr_backend = create_ocr_processor(settings.ocr_engine)
+    if not ocr_backend.is_available():
         logger.critical(
-            "CRITICAL: Autonomous execution refused because OCR subsystem is unavailable. "
-            "To prevent hallucinated desktop observations, PaddleOCR must be installed: "
-            "pip install paddleocr paddlepaddle"
+            "CRITICAL: Autonomous execution refused because configured OCR backend "
+            f"'{settings.ocr_engine}' is unavailable. Install/enable that backend "
+            "before allowing desktop perception."
         )
         sys.exit(1)
 

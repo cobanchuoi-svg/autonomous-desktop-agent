@@ -70,7 +70,15 @@ class WindowSurfaceDetector:
         for element in elements:
             inside = window is not None and window.contains(element.center_x, element.center_y)
             tagged.append(element.model_copy(update={
-                "surface": "popup" if inside and window.is_popup else "desktop",
+                # Keep the object bound to the current foreground surface.
+                # Previously normal foreground-window text was labelled
+                # "desktop", making it indistinguishable from taskbar and
+                # background-screen OCR.
+                "surface": (
+                    "popup" if inside and window and window.is_popup
+                    else "foreground_window" if inside and window
+                    else "desktop"
+                ),
                 "container_id": window.window_id if inside and window else None,
                 "window_title": window.title if inside and window else None,
             }))
