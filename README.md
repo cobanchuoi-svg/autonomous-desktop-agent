@@ -75,7 +75,7 @@ Gemini Vision is an optional fallback for cases where local text OCR cannot loca
 ### 1. Install
 
 ```powershell
-git clone https://github.com/cobanchuoi-svg/myfistproject.git
+git clone https://github.com/cobanchuoi-svg/autonomous-desktop-agent.git
 cd desktop-ai-agent
 
 python -m venv .venv
