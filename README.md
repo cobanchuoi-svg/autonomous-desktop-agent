@@ -41,11 +41,15 @@ Create `config.local.json` (automatically protected by `.gitignore`):
 {
   "llm": {
     "provider": "gemini",
+    "model_name": "gemini-3.8-flash",
     "gemini_api_key": "YOUR_GEMINI_API_KEY"
   }
 }
 ```
-*(Or use 100% offline private local models via [Ollama](https://ollama.com/) with `ollama pull qwen2.5:3b`)*.
+
+> **💡 Model Selection Note:** Google AI Studio regularly rolls out newer model versions (e.g., `gemini-3.8-flash`, `gemini-flash-latest`, `gemini-2.5-pro`). You can freely change `"model_name"` in your `config.local.json` to whichever model is active in your region/account. The agent also includes built-in auto-recovery to gracefully migrate if an older model is deprecated.
+>
+> *(Or use 100% offline private local models via [Ollama](https://ollama.com/) with `ollama pull qwen2.5:3b`)*.
 
 ### 3. Launch GUI Dashboard
 ```powershell
