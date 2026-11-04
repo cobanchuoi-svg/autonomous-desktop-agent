@@ -3,6 +3,7 @@ Gemini LLM Provider implementation using async httpx directly (no extra bloated 
 Supports standard generation, structured JSON mode, and streaming.
 """
 
+import asyncio
 import json
 from typing import Any, AsyncIterator, Dict, Optional
 import httpx
