@@ -20,18 +20,25 @@ class WorkflowRouter:
         language_request = self._resolve_language_preference(message)
         if language_request is not None:
             return language_request
-        prompt = f"Available workflows:\n{self.registry.descriptions()}\n\nUser request:\n{message}\n\nReturn JSON now."
-        raw = await self.provider.generate(prompt, system_prompt=self.SYSTEM_PROMPT, json_mode=True)
-        try:
-            primary = self._parse_response(raw, source=getattr(self.provider, "provider_name", "llm"))
-        except ValueError as exc:
-            primary = WorkflowRequest("NO_MATCH", 0.0, {}, "NO_MATCH", None, getattr(self.provider, "provider_name", "llm"), str(exc))
-        local_app_route = self._resolve_explicit_app_launch(message, primary)
+
+        # Fast path 1: Explicit app launch (e.g. "mở chrome", "open notepad") runs instantly in 0.001s locally
+        local_app_route = self._resolve_explicit_app_launch(message)
         if local_app_route is not None:
             return local_app_route
-        local_search_route = self._resolve_explicit_web_search(message, primary)
+
+        # Fast path 2: Explicit search
+        dummy_req = WorkflowRequest("NO_MATCH", 0.0, {})
+        local_search_route = self._resolve_explicit_web_search(message, dummy_req)
         if local_search_route is not None:
             return local_search_route
+
+        prompt = f"Available workflows:\n{self.registry.descriptions()}\n\nUser request:\n{message}\n\nReturn JSON now."
+        try:
+            raw = await self.provider.generate(prompt, system_prompt=self.SYSTEM_PROMPT, json_mode=True)
+            primary = self._parse_response(raw, source=getattr(self.provider, "provider_name", "llm"))
+        except Exception as exc:
+            primary = WorkflowRequest("NO_MATCH", 0.0, {}, "NO_MATCH", None, getattr(self.provider, "provider_name", "llm"), str(exc))
+
         local_desktop_task = self._resolve_explicit_document_task(message, primary)
         if local_desktop_task is not None:
             return local_desktop_task
@@ -57,12 +64,13 @@ class WorkflowRouter:
                 fallback_error=str(exc),
             )
 
-    def _resolve_explicit_app_launch(self, message: str, primary: WorkflowRequest) -> Optional[WorkflowRequest]:
+    def _resolve_explicit_app_launch(self, message: str, primary: Optional[WorkflowRequest] = None) -> Optional[WorkflowRequest]:
         """Fill OPEN_APP slots from an unambiguous local launch phrase before cloud fallback."""
-        if primary.status not in {"CLARIFY", "NO_MATCH"}:
-            return None
-        if primary.workflow not in {"OPEN_APP", "CLARIFY", "NO_MATCH"}:
-            return None
+        if primary is not None:
+            if primary.status not in {"CLARIFY", "NO_MATCH"}:
+                return None
+            if primary.workflow not in {"OPEN_APP", "CLARIFY", "NO_MATCH"}:
+                return None
         from agent.decision.goal_classifier import GoalClassifier
 
         classification = GoalClassifier().classify(message)
@@ -90,8 +98,9 @@ class WorkflowRouter:
             app_name = candidate
         if not app_name:
             return None
+        conf = max(getattr(primary, "confidence", 0.0), classification.confidence, 0.95)
         return WorkflowRequest(
-            "OPEN_APP", max(primary.confidence, classification.confidence),
+            "OPEN_APP", conf,
             {"app_name": app_name}, "MATCH", None, "local_rule",
         )
 
