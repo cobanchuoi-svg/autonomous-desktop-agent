@@ -197,6 +197,36 @@ class WorkflowRuntime:
                 {"ocr": result.ocr, "analysis": result.analysis, "document_path": document_path},
                 result.error,
             )
+        if spec.handler == "copy_image_to_wps":
+            from agent.core.document_agent import DocumentAgent
+            from agent.actions.window_layout import DocumentWindowController
+            from agent.actions.image_clipboard import copy_image_to_wps
+
+            image_path = str(params["image_path"]).strip()
+            wps_title = str(params.get("wps_title") or "WPS").strip()
+            coordinator = DocumentAgent(
+                capture=self.engine.capture,
+                ocr=self.engine.ocr,
+                brain=self.engine.brain_client,
+                memory=getattr(self.engine, "memory", None),
+            )
+            analysis = await coordinator.scan(image_path, wps_title=wps_title)
+            if not analysis.success:
+                return WorkflowResult(name, False, analysis.message, {"analysis": analysis.analysis}, analysis.error)
+            copied = await asyncio.to_thread(
+                copy_image_to_wps,
+                image_path,
+                wps_title=wps_title,
+                window_controller=DocumentWindowController(),
+            )
+            if not copied.success:
+                return WorkflowResult(name, False, copied.message, {"analysis": analysis.analysis}, copied.message)
+            return WorkflowResult(
+                name,
+                True,
+                f"{analysis.message}\nĐã chép ảnh vào {wps_title}.",
+                {"analysis": analysis.analysis, "copy": copied},
+            )
         if spec.handler == "web_search":
             query = str(params["query"]).strip()
             if not query or len(query) > 500:

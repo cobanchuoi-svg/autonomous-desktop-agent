@@ -78,6 +78,18 @@ class DocumentWindowController:
             )
         )
 
+    def activate_window(self, title_query: str) -> bool:
+        """Activate a uniquely matching window without changing its layout."""
+        window = self._find_window(title_query)
+        if window is None:
+            return False
+        handle = getattr(window, "_hWnd", None)
+        if not handle:
+            return False
+        ctypes.windll.user32.SetForegroundWindow(handle)
+        time.sleep(0.2)
+        return True
+
     def prepare_foreground_document(
         self,
         document_path: str,
