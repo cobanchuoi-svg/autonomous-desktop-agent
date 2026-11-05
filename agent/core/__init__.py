@@ -20,6 +20,9 @@ def __getattr__(name: str):
     if name in ("Container", "container"):
         from agent.core.container import Container, container
         return Container if name == "Container" else container
+    if name in ("DocumentAgent", "DocumentAgentResult"):
+        from agent.core.document_agent import DocumentAgent, DocumentAgentResult
+        return DocumentAgent if name == "DocumentAgent" else DocumentAgentResult
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 __all__ = [
@@ -31,4 +34,6 @@ __all__ = [
     "ActionExecutionException",
     "SafetyViolationException",
     "LLMInferenceException",
+    "DocumentAgent",
+    "DocumentAgentResult",
 ]

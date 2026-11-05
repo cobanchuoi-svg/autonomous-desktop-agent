@@ -9,6 +9,7 @@ from agent.actions.keyboard import KeyboardController
 from agent.actions.filesystem import FilesystemController
 from agent.actions.application import ApplicationController
 from agent.actions.dispatcher import ActionDispatcher
+from agent.actions.window_layout import DocumentWindowController, WindowLayoutResult
 
 __all__ = [
     "ActionType",
@@ -22,4 +23,6 @@ __all__ = [
     "FilesystemController",
     "ApplicationController",
     "ActionDispatcher",
+    "DocumentWindowController",
+    "WindowLayoutResult",
 ]
