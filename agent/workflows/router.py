@@ -32,6 +32,9 @@ class WorkflowRouter:
         local_scan_route = self._resolve_explicit_document_scan(message)
         if local_scan_route is not None:
             return local_scan_route
+        local_copy_route = self._resolve_explicit_image_copy(message)
+        if local_copy_route is not None:
+            return local_copy_route
 
         # Fast path 2: Explicit search
         dummy_req = WorkflowRequest("NO_MATCH", 0.0, {})
@@ -152,6 +155,29 @@ class WorkflowRouter:
             "SCAN_DOCUMENT",
             0.99,
             {"document_path": match.group(1).strip().strip('"'), "wps_title": "WPS"},
+            "MATCH",
+            None,
+            "local_rule",
+        )
+
+    def _resolve_explicit_image_copy(self, message: str) -> Optional[WorkflowRequest]:
+        """Recognize image-path requests that should be copied into WPS."""
+        text = re.sub(r"\s+", " ", message.strip())
+        match = re.match(
+            r"^(?:please\s+)?(?:chép|chep|copy|đưa|chèn|chen)\s+"
+            r"(?:ảnh|image|photo|file\s+ảnh)?\s*"
+            r"(.+?\.(?:png|jpg|jpeg|bmp|tif|tiff|webp))\s+"
+            r"(?:vào|to|into)\s+(?:wps|wps office)"
+            r"\s*[.!?]*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return WorkflowRequest(
+            "COPY_IMAGE_TO_WPS",
+            0.99,
+            {"image_path": match.group(1).strip().strip('"'), "wps_title": "WPS"},
             "MATCH",
             None,
             "local_rule",

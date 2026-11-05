@@ -23,3 +23,13 @@ async def test_chat_command_routes_scan_to_ocr_and_brain():
     )
     assert request.workflow == "SCAN_DOCUMENT"
     assert request.parameters["document_path"].endswith("scan.pdf")
+
+
+@pytest.mark.asyncio
+async def test_chat_command_routes_image_copy_to_wps():
+    router = WorkflowRouter(object(), WorkflowRegistry())
+    request = await router.route(
+        r"chép ảnh C:\Users\me\diagram.png vào WPS"
+    )
+    assert request.workflow == "COPY_IMAGE_TO_WPS"
+    assert request.parameters["image_path"].endswith("diagram.png")

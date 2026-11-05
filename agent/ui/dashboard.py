@@ -4,6 +4,7 @@ import asyncio
 import re
 import threading
 import tkinter as tk
+from tkinter import filedialog
 from typing import Any, Optional
 
 try:
@@ -93,6 +94,10 @@ class AgentDashboard:
                 input_frame, text="Send", width=88, height=42, command=self.send_message
             )
             self.send_btn.pack(side="right")
+            self.file_btn = ctk.CTkButton(
+                input_frame, text="Chọn file", width=92, height=42, command=self.choose_file
+            )
+            self.file_btn.pack(side="right", padx=(0, 8))
             self.stop_btn = ctk.CTkButton(
                 input_frame, text="Stop", width=76, height=42,
                 command=self.stop_agent, state="disabled",
@@ -129,6 +134,8 @@ class AgentDashboard:
             self.command_input.bind("<FocusOut>", self._restore_placeholder)
             self.send_btn = tk.Button(input_frame, text="Send", width=10, command=self.send_message)
             self.send_btn.pack(side="right")
+            self.file_btn = tk.Button(input_frame, text="Chọn file", width=10, command=self.choose_file)
+            self.file_btn.pack(side="right", padx=(0, 8))
             self.stop_btn = tk.Button(
                 input_frame, text="Stop", width=8, command=self.stop_agent, state="disabled"
             )
@@ -164,10 +171,12 @@ class AgentDashboard:
         state = "disabled" if busy else "normal"
         if CTK_AVAILABLE:
             self.send_btn.configure(state=state)
+            self.file_btn.configure(state=state)
             self.stop_btn.configure(state="normal" if busy else "disabled")
             self.command_input.configure(state=state)
         else:
             self.send_btn.config(state=state)
+            self.file_btn.config(state=state)
             self.stop_btn.config(state="normal" if busy else "disabled")
             self.command_input.config(state=state)
         self._set_status("Working..." if busy else "Ready")
@@ -201,6 +210,27 @@ class AgentDashboard:
 
         self.command_input.delete(0, "end")
         self._placeholder_active = False
+        self._submit_goal(goal)
+
+    def choose_file(self) -> None:
+        """Select a PDF/image and send it directly to the document workflow."""
+        if self._busy:
+            return
+        path = filedialog.askopenfilename(
+            title="Chọn PDF hoặc ảnh để quét",
+            filetypes=[
+                ("PDF và ảnh", "*.pdf *.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),
+                ("PDF", "*.pdf"),
+                ("Ảnh", "*.png *.jpg *.jpeg *.bmp *.tif *.tiff *.webp"),
+                ("Tất cả file", "*.*"),
+            ],
+        )
+        if not path:
+            return
+        self._submit_goal(f'quét "{path}" và để WPS chạy nền')
+
+    def _submit_goal(self, goal: str) -> None:
+        """Submit a chat goal from typed text or a selected file."""
         self._append_message("You", goal)
         if goal.startswith(("/propose ", "/approve ", "/run ", "/reject ")):
             self._set_busy(True)
