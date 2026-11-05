@@ -8,6 +8,8 @@ import re
 from typing import Any, Dict, List, Optional
 from agent.llm.base import BaseLLMProvider, LLMResponse
 from agent.logger import logger
+from agent.brain.structural_analysis import StructuralAnalysisResult, analyze_file_structure
+from agent.vision.base import BaseOCRProcessor
 
 
 SYSTEM_PROMPT = """You are an autonomous local AI desktop agent controlling a personal computer.
@@ -45,6 +47,70 @@ class BrainClient:
 
     def __init__(self, provider: BaseLLMProvider):
         self.provider = provider
+
+    def analyze_file_structure(
+        self,
+        elements: List[Any],
+        *,
+        file_id: Optional[str] = None,
+        expected_headers: Optional[List[str]] = None,
+    ) -> StructuralAnalysisResult:
+        """Analyze one OCR result locally without invoking the LLM provider."""
+        return analyze_file_structure(
+            elements,
+            file_id=file_id,
+            expected_headers=expected_headers,
+        )
+
+    def analyze_ocr_result(
+        self,
+        ocr_result: Dict[str, Any],
+        *,
+        file_id: Optional[str] = None,
+        expected_headers: Optional[List[str]] = None,
+    ) -> StructuralAnalysisResult:
+        """Analyze a single OCR payload without invoking the reasoning provider."""
+        return self.analyze_file_structure(
+            ocr_result.get("elements", []),
+            file_id=file_id,
+            expected_headers=expected_headers,
+        )
+
+    def analyze_screen(
+        self,
+        image: Any,
+        ocr_processor: BaseOCRProcessor,
+        *,
+        file_id: Optional[str] = None,
+        expected_headers: Optional[List[str]] = None,
+    ) -> StructuralAnalysisResult:
+        """Run the supplied OCR processor, then analyze this screen independently."""
+        ocr_result = ocr_processor.extract_text(image)
+        return self.analyze_ocr_result(
+            ocr_result,
+            file_id=file_id,
+            expected_headers=expected_headers,
+        )
+
+    def analyze_files_independently(
+        self,
+        ocr_results: Dict[str, Dict[str, Any]],
+        *,
+        expected_headers: Optional[Dict[str, List[str]]] = None,
+    ) -> Dict[str, StructuralAnalysisResult]:
+        """Analyze multiple visible files independently in one observation.
+
+        The returned contexts are keyed by file id and are never reused between
+        files. Any later comparison is intentionally left to an audit layer.
+        """
+        return {
+            file_id: self.analyze_ocr_result(
+                result,
+                file_id=file_id,
+                expected_headers=(expected_headers or {}).get(file_id),
+            )
+            for file_id, result in ocr_results.items()
+        }
 
     def _build_prompt(
         self,

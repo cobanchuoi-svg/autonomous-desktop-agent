@@ -159,6 +159,44 @@ class WorkflowRuntime:
                 "error": getattr(execution, "error", None),
             }
             return WorkflowResult(name, success, f"{app_name} {'launched successfully' if success else 'could not be launched'}.", {"execution": evidence}, None if success else getattr(execution, "error", None))
+        if spec.handler == "open_document_foreground":
+            from agent.actions.window_layout import DocumentWindowController
+
+            document_path = str(params["document_path"]).strip()
+            wps_title = str(params.get("wps_title") or "WPS").strip()
+            layout = await asyncio.to_thread(
+                DocumentWindowController().prepare_foreground_document,
+                document_path,
+                wps_title=wps_title,
+            )
+            return WorkflowResult(
+                name,
+                layout.success,
+                layout.reason if not layout.success else (
+                    f"Opened {document_path} full screen in the foreground; {wps_title} remains in the background."
+                ),
+                {"document_path": document_path, "document_title": layout.document_title},
+                None if layout.success else layout.reason,
+            )
+        if spec.handler == "scan_document":
+            document_path = str(params["document_path"]).strip()
+            wps_title = str(params.get("wps_title") or "WPS").strip()
+            from agent.core.document_agent import DocumentAgent
+
+            coordinator = DocumentAgent(
+                capture=self.engine.capture,
+                ocr=self.engine.ocr,
+                brain=self.engine.brain_client,
+                memory=getattr(self.engine, "memory", None),
+            )
+            result = await coordinator.scan(document_path, wps_title=wps_title)
+            return WorkflowResult(
+                name,
+                result.success,
+                result.message,
+                {"ocr": result.ocr, "analysis": result.analysis, "document_path": document_path},
+                result.error,
+            )
         if spec.handler == "web_search":
             query = str(params["query"]).strip()
             if not query or len(query) > 500:
