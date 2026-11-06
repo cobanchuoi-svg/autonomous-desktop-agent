@@ -27,6 +27,7 @@ class WorkflowRuntime:
         self._response_language: Optional[str] = None
         self._pending_text_write: Optional[dict[str, Any]] = None
         self._pending_script_draft: Optional[dict[str, Any]] = None
+        self._last_document_path: Optional[str] = None
 
     async def handle(self, message: str, on_chat_start: Any = None, on_chat_token: Any = None) -> tuple[WorkflowRequest, WorkflowResult]:
         # 1. Handle pending Python script execution approval
@@ -92,14 +93,31 @@ class WorkflowRuntime:
         pending_goal = None
         if self._pending_clarification is not None:
             pending_goal, question = self._pending_clarification
-            self._pending_clarification = None
-            message = (
-                f"Continue the user's earlier request. Original request: {pending_goal}\n"
-                f"Clarification question asked: {question}\nUser's clarification: {message}"
-            )
-        request = await self.router.route(message)
+            independent_request = self._resolve_last_document_command(original_message)
+            if independent_request is None and self._looks_like_independent_command(original_message):
+                independent_request = await self.router.route(original_message)
+                if independent_request.status != "MATCH" or independent_request.workflow in {"CHAT", "CLARIFY", "NO_MATCH"}:
+                    independent_request = None
+            if independent_request is not None:
+                self._pending_clarification = None
+                request = independent_request
+            else:
+                self._pending_clarification = None
+                message = (
+                    f"Continue the user's earlier request. Original request: {pending_goal}\n"
+                    f"Clarification question asked: {question}\nUser's clarification: {message}"
+                )
+                request = None
+        else:
+            request = None
+        if request is None:
+            request = self._resolve_last_document_command(message)
+        if request is None:
+            request = await self.router.route(message)
         if request.status == "CLARIFY":
-            question = request.clarification_question or "Could you clarify what you want me to do?"
+            question = self._sanitize_clarification_question(
+                request.clarification_question or "Could you clarify what you want me to do?"
+            )
             self._pending_clarification = (pending_goal or original_message, question)
             return request, WorkflowResult("CLARIFY", True, question, {"router_source": request.router_source}, request.fallback_error)
         if request.workflow == "NO_MATCH":
@@ -111,7 +129,66 @@ class WorkflowRuntime:
             message = "I couldn't match that request to a registered workflow."
             return request, WorkflowResult("NO_MATCH", False, message, {"router_source": request.router_source}, request.fallback_error or "no_matching_workflow")
         result = await self.execute(request, on_chat_start=on_chat_start, on_chat_token=on_chat_token)
+        if result.success and request.workflow in {"OPEN_DOCUMENT_FOREGROUND", "SCAN_DOCUMENT"}:
+            path = request.parameters.get("document_path")
+            if isinstance(path, str) and path.strip():
+                self._last_document_path = path.strip()
+        elif result.success and request.workflow == "COPY_IMAGE_TO_WPS":
+            path = request.parameters.get("image_path")
+            if isinstance(path, str) and path.strip():
+                self._last_document_path = path.strip()
         return request, result
+
+    @staticmethod
+    def _looks_like_independent_command(message: str) -> bool:
+        """Recognize imperative commands before consuming a pending clarification."""
+        normalized = re.sub(r"\s+", " ", message.strip().casefold())
+        return bool(re.match(
+            r"^(?:please\s+)?(?:mở|mo|open|show|hiện|quét|quet|scan|ocr|đọc|doc|"
+            r"phân\s+tích|analyze|analyse|chép|chep|copy|đưa|dua|chèn|chen|"
+            r"tìm|tim|search|google|bật|bat|launch|start|run|viết|viet|"
+            r"soạn|soan|type|write|nhập|nhap|điền|dien)\b",
+            normalized,
+            flags=re.IGNORECASE,
+        ))
+
+    @staticmethod
+    def _sanitize_clarification_question(question: str) -> str:
+        """Remove concrete path examples from router-generated clarification text."""
+        if not re.search(r"\b(?:ví dụ|example|for example)\b", question, flags=re.IGNORECASE):
+            return question
+        if not re.search(r"(?:[a-z]:[\\/]|/[^ ]+|\\[^ ]+)\S*\.(?:pdf|png|jpe?g|bmp|tiff?|webp)\b", question, flags=re.IGNORECASE):
+            return question
+        return "Vui lòng cung cấp đường dẫn đầy đủ của file cần xử lý."
+
+    def _resolve_last_document_command(self, message: str) -> Optional[WorkflowRequest]:
+        """Resolve short follow-up copy commands against the latest scanned file.
+
+        Routing remains stateless, so this session-local state is deliberately kept
+        at the runtime boundary and never used by Brain to infer document content.
+        """
+        path = self._last_document_path
+        if not path:
+            return None
+        normalized = re.sub(r"\s+", " ", message.strip().casefold())
+        if not re.fullmatch(
+            r"(?:chép|chep|copy|đưa|chèn|chen)\s+"
+            r"(?:ảnh|image|file\s+ảnh)?\s*"
+            r"(?:đã\s+chọn|vừa\s+quét|vừa\s+đọc|nó|ảnh)?\s*"
+            r"(?:vào|sang|to|into)\s+(?:wps|wps office)(?:\s+doc(?:ument)?)?"
+            r"\s*[.!?]*",
+            normalized,
+            flags=re.IGNORECASE,
+        ):
+            return None
+        return WorkflowRequest(
+            "COPY_IMAGE_TO_WPS",
+            0.99,
+            {"image_path": path, "wps_title": "WPS"},
+            "MATCH",
+            None,
+            "session_context",
+        )
 
     async def execute(self, request: WorkflowRequest, on_chat_start: Any = None, on_chat_token: Any = None) -> WorkflowResult:
         spec = self.registry.get(request.workflow)

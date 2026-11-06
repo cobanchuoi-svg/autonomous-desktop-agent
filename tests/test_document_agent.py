@@ -1,4 +1,5 @@
 import pytest
+from PIL import Image
 
 from agent.brain.brain_client import BrainClient
 from agent.brain.spatial_mapping import SpatialElement
@@ -7,7 +8,11 @@ from agent.llm.mock_provider import MockLLMProvider
 
 
 class FakeCapture:
+    def __init__(self):
+        self.calls = 0
+
     def capture_frame(self):
+        self.calls += 1
         return object()
 
 
@@ -41,3 +46,21 @@ async def test_document_agent_unifies_layout_eyes_ocr_and_brain():
     assert result.success
     assert result.analysis.status.value == "PASS"
     assert result.analysis.ai_required is False
+
+
+@pytest.mark.asyncio
+async def test_document_agent_reads_image_file_without_screen_capture(tmp_path):
+    image_path = tmp_path / "scan.png"
+    Image.new("RGB", (20, 20), "white").save(image_path)
+    capture = FakeCapture()
+    agent = DocumentAgent(
+        capture=capture,
+        ocr=FakeOCR(),
+        brain=BrainClient(MockLLMProvider()),
+        window_controller=FakeWindowController(),
+    )
+
+    result = await agent.scan(str(image_path))
+
+    assert result.success
+    assert capture.calls == 0

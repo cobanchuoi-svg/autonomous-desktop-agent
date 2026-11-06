@@ -9,7 +9,7 @@ An experimental Windows desktop agent built around a simple principle:
 
 > **Route the request first. Use perception only when desktop context is actually needed.**
 
-The project combines deterministic workflows, local Windows OCR, UI Automation, coordinate-aware elements, and an optional LLM router. It is a learning/research project, not a replacement for a general-purpose commercial computer-use system.
+The project combines deterministic workflows, local Windows OCR, UI Automation, coordinate-aware elements, and an optional LLM router. Its document-focused path is designed for independent file observation and structural analysis; it is a learning/research project, not a replacement for a general-purpose commercial computer-use system.
 
 ## What it can do
 
@@ -18,6 +18,9 @@ The project combines deterministic workflows, local Windows OCR, UI Automation, 
 - Read visible screen text using Windows Media OCR.
 - Represent OCR/UI Automation output as text elements with screen coordinates.
 - Distinguish elements belonging to the foreground window, a popup, or the desktop.
+- Scan image files directly from memory with Pillow, without opening an image viewer.
+- Analyze each document independently with local spatial rules and return `PASS`, `REVIEW_REQUIRED`, or `SCHEMA_DRIFT`.
+- Keep a session-local reference to the latest successfully scanned document for explicit follow-up commands such as copying the selected image into WPS.
 - Generate text and enter it into supported text editors.
 - Use the existing FSM only for complex multi-step desktop tasks.
 - Create draft scripts for unknown tasks, requiring explicit approval before execution.
@@ -28,22 +31,67 @@ The project combines deterministic workflows, local Windows OCR, UI Automation, 
 User message
     │
     ▼
-Workflow Router ──► CHAT / OPEN_APP / WEB_SEARCH / WRITE_TEXT_TO_APP / READ_SCREEN
-    │
-    └──► FSM_TASK only when a task requires multi-step desktop interaction
+Workflow Router
+    ├── OPEN_DOCUMENT_FOREGROUND
+    ├── SCAN_DOCUMENT
+    └── COPY_IMAGE_TO_WPS
                  │
                  ▼
-        Screenshot → foreground window / popup surface → OCR + UI Automation
+          DocumentAgent
+                 │
+        ┌────────┴────────┐
+        │                 │
+   Image input       PDF input
+   Pillow/RAM        open viewer + capture
+        │                 │
+        └────────┬────────┘
+                 ▼
+              OCR
+       text + bounding boxes
                  │
                  ▼
-      UI elements: { text, bbox, surface, container_id, element_id }
+       Brain structural analysis
+   rows / columns / headers / geometry
                  │
                  ▼
-          LLM selects an allowed element/action
+      PASS / REVIEW_REQUIRED / SCHEMA_DRIFT
                  │
                  ▼
-      CoordinateRegistry resolves element_id → screen coordinate → action
+        DocumentAgentResult
 ```
+
+`SCAN_DOCUMENT` is an analysis workflow and does not paste data. `COPY_IMAGE_TO_WPS` first analyzes the image, then copies the original image through the Windows clipboard; it is not an OCR-to-Excel exporter.
+
+### Document Agent modules
+
+| Layer | Files | Responsibility |
+| --- | --- | --- |
+| Coordinator | `agent/core/document_agent.py` | Coordinates ingestion, OCR, Brain analysis, and optional memory updates. |
+| Ingestion/layout | `agent/actions/window_layout.py` | Validates files; image scans are headless, while PDF observation currently uses the foreground viewer path. |
+| Capture/OCR | `agent/vision/capture.py`, `factory.py`, `windows_ocr.py`, `hybrid_ocr.py`, `ocr.py`, `parser.py`, `roi.py` | Produces OCR text, elements, confidence, and bounding boxes. |
+| Brain geometry | `agent/brain/spatial_mapping.py` | Groups rows, classifies screen structure, and maps spatial boundaries. |
+| Brain decision | `agent/brain/brain_client.py`, `structural_analysis.py` | Builds independent per-file contexts and emits deterministic decisions. |
+| Workflow boundary | `agent/workflows/router.py`, `registry.py`, `runtime.py` | Routes document commands and preserves the latest successful document path for explicit follow-ups. |
+| WPS action | `agent/actions/image_clipboard.py` | Copies the original image into WPS; it does not generate spreadsheet data. |
+
+### Document Agent limitations
+
+The current Document Agent ends at:
+
+```text
+PDF/Image → OCR → spatial/structural analysis → decision
+```
+
+The following are not implemented in this path yet:
+
+- native multi-page PDF parsing/rendering;
+- business-field extraction for invoices or airway bills;
+- date, number, and currency normalization;
+- field-level schema validation and audit export;
+- Excel workbook generation;
+- Word template filling or placeholder replacement.
+
+For these capabilities, the intended extension is to add separate ingestion adapters, business extraction, normalization, validation, and exporters after the existing Brain layer rather than replacing the coordinator.
 
 ### Perception model
 
@@ -167,6 +215,9 @@ python -m pytest tests
 
 - Windows OCR is fast for readable UI text, but does not understand icons or overall layout.
 - OCR language quality depends on installed Windows OCR language packs and visible font size.
+- PDF scanning currently opens the document in an external viewer and captures the visible screen; multi-page native PDF ingestion is not implemented.
+- Structural analysis is deterministic and independent per file, but it does not by itself produce normalized business records or Excel/Word output.
+- Copying an image into WPS is a GUI clipboard action and currently does not verify the exact post-paste content.
 - Text-entry verification confirms foreground focus and visible screen change; it cannot always read the exact final editor content through Windows UI Automation.
 - `Stop` is cooperative: it cannot instantly interrupt an already-running native OCR, PowerShell UIA probe, or keyboard injection.
 - Gemini Vision adds latency, cost, and network dependency, so it remains an exceptional fallback.
@@ -174,6 +225,11 @@ python -m pytest tests
 
 ## Next roadmap
 
+- Native PDF ingestion with page-by-page rendering.
+- Business-field extraction and normalization for one concrete document schema.
+- Field-level validation with explicit review reasons and audit records.
+- Excel export with correct number/date cell types.
+- Word template filling only after the document schema and review flow are stable.
 - ROI selection from foreground-window and popup bounds.
 - Screen/ROI hashing and OCR cache for unchanged screens.
 - Better popup classification and container-aware target selection.

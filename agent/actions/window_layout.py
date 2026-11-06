@@ -104,6 +104,9 @@ class DocumentWindowController:
         if os.name != "nt":
             return WindowLayoutResult(False, reason="Foreground document layout requires Windows")
 
+        if path.suffix.casefold() in {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"}:
+            return WindowLayoutResult(True, document_title=path.name)
+
         try:
             os.startfile(str(path))
         except OSError as exc:

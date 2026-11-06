@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from agent.brain.brain_client import BrainClient
@@ -57,8 +58,17 @@ class DocumentAgent:
             return DocumentAgentResult(False, layout.reason, error=layout.reason)
 
         try:
-            await asyncio.sleep(0.8)
-            frame = await asyncio.to_thread(self.capture.capture_frame)
+            is_image = Path(document_path).suffix.casefold() in {
+                ".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff", ".webp"
+            }
+            if is_image:
+                from PIL import Image
+
+                frame = await asyncio.to_thread(Image.open, document_path)
+                frame.load()
+            else:
+                await asyncio.sleep(0.8)
+                frame = await asyncio.to_thread(self.capture.capture_frame)
             ocr_result = await asyncio.to_thread(self.ocr.extract_text, frame)
             analysis = await asyncio.to_thread(
                 self.brain.analyze_ocr_result,

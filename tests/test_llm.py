@@ -37,6 +37,10 @@ async def test_qwen_client_backward_compatibility():
     provider = MockLLMProvider()
     client = QwenClient(provider)
     assert isinstance(client, BrainClient)
+    res = await client.generate_action(
+        goal="Open Google Chrome",
+        screen_text="Desktop icons: Chrome, Trash, Files",
+    )
     assert res.params.get("app_name") == "chrome"
     assert len(res.thought) > 0
 
