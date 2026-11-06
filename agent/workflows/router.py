@@ -26,6 +26,16 @@ class WorkflowRouter:
         if local_app_route is not None:
             return local_app_route
 
+        local_document_route = self._resolve_explicit_document_open(message)
+        if local_document_route is not None:
+            return local_document_route
+        local_scan_route = self._resolve_explicit_document_scan(message)
+        if local_scan_route is not None:
+            return local_scan_route
+        local_copy_route = self._resolve_explicit_image_copy(message)
+        if local_copy_route is not None:
+            return local_copy_route
+
         # Fast path 2: Explicit search
         dummy_req = WorkflowRequest("NO_MATCH", 0.0, {})
         local_search_route = self._resolve_explicit_web_search(message, dummy_req)
@@ -102,6 +112,75 @@ class WorkflowRouter:
         return WorkflowRequest(
             "OPEN_APP", conf,
             {"app_name": app_name}, "MATCH", None, "local_rule",
+        )
+
+    def _resolve_explicit_document_open(self, message: str) -> Optional[WorkflowRequest]:
+        """Recognize local PDF/image foreground requests without an LLM call."""
+        text = re.sub(r"\s+", " ", message.strip())
+        match = re.match(
+            r"^(?:please\s+)?(?:mở|open|show|hiện)\s+"
+            r"(?:file\s+)?(.+?\.(?:pdf|png|jpg|jpeg|bmp|tif|tiff|webp))"
+            r"(?:\s+(?:lên|ra)\s+(?:toàn\s+màn\s+hình|full\s*screen|foreground))?"
+            r"(?:\s+(?:và|and)\s+(?:để|keep)\s+(?:wps|wps office)\s+(?:chạy\s+)?(?:nền|background))?"
+            r"\s*[.!?]*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        path = match.group(1).strip().strip('"')
+        return WorkflowRequest(
+            "OPEN_DOCUMENT_FOREGROUND",
+            0.99,
+            {"document_path": path, "wps_title": "WPS"},
+            "MATCH",
+            None,
+            "local_rule",
+        )
+
+    def _resolve_explicit_document_scan(self, message: str) -> Optional[WorkflowRequest]:
+        """Recognize scan/analyze requests and route them to OCR + Brain."""
+        text = re.sub(r"\s+", " ", message.strip())
+        match = re.match(
+            r"^(?:please\s+)?(?:quét|scan|ocr|đọc|phân\s+tích|analyze|analyse)\s+"
+            r"(?:file\s+)?(.+?\.(?:pdf|png|jpg|jpeg|bmp|tif|tiff|webp))"
+            r"(?:\s+(?:và|and)\s+(?:để|keep)\s+(?:wps|wps office)\s+(?:chạy\s+)?(?:nền|background))?"
+            r"\s*[.!?]*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return WorkflowRequest(
+            "SCAN_DOCUMENT",
+            0.99,
+            {"document_path": match.group(1).strip().strip('"'), "wps_title": "WPS"},
+            "MATCH",
+            None,
+            "local_rule",
+        )
+
+    def _resolve_explicit_image_copy(self, message: str) -> Optional[WorkflowRequest]:
+        """Recognize image-path requests that should be copied into WPS."""
+        text = re.sub(r"\s+", " ", message.strip())
+        match = re.match(
+            r"^(?:please\s+)?(?:chép|chep|copy|đưa|chèn|chen)\s+"
+            r"(?:ảnh|image|photo|file\s+ảnh)?\s*"
+            r"(.+?\.(?:png|jpg|jpeg|bmp|tif|tiff|webp))\s+"
+            r"(?:vào|to|into)\s+(?:wps|wps office)"
+            r"\s*[.!?]*$",
+            text,
+            flags=re.IGNORECASE,
+        )
+        if not match:
+            return None
+        return WorkflowRequest(
+            "COPY_IMAGE_TO_WPS",
+            0.99,
+            {"image_path": match.group(1).strip().strip('"'), "wps_title": "WPS"},
+            "MATCH",
+            None,
+            "local_rule",
         )
 
     def _resolve_explicit_web_search(self, message: str, primary: WorkflowRequest) -> Optional[WorkflowRequest]:

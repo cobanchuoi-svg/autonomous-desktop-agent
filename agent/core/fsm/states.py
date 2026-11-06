@@ -282,7 +282,12 @@ class ActState(BaseState):
         return StateType.ACT
 
     async def enter(self, context: StateContext) -> None:
-        context.notify(f"Entering ACT state: Executing '{context.proposed_action.action_type.value}'.", self.state_type.value)  # type: ignore
+        action_name = (
+            context.proposed_action.action_type.value
+            if context.proposed_action is not None
+            else "None"
+        )
+        context.notify(f"Entering ACT state: Executing '{action_name}'.", self.state_type.value)
 
     async def execute(self, context: StateContext) -> Optional[StateType]:
         assert context.proposed_action is not None
