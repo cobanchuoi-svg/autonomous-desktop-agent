@@ -52,13 +52,34 @@ class ObserveState(BaseState):
         try:
             # 1. Screen capture
             with context.benchmark.measure("screen_capture"):
+                # Capture and crop synchronously in one worker so the screen
+                # frame and OCR target are from the same point in time.
                 frame = await asyncio.to_thread(context.capture.capture_frame)
             context.current_frame = frame
 
             # 2. OCR and accessible controls are independent observations of the same frame.
             async def read_ocr():
                 with context.benchmark.measure("ocr_total"):
-                    return await asyncio.to_thread(context.ocr.extract_text, frame)
+                    target = context.observation_target
+                    if target is None:
+                        return await asyncio.to_thread(context.ocr.extract_text, frame)
+                    from agent.vision.roi import ScreenRegion, crop_region, translate_elements
+                    origin_x, origin_y = context.capture.last_frame_origin()
+                    left, top, right, bottom = target.rect
+                    crop, local = crop_region(
+                        frame, ScreenRegion(left - origin_x, top - origin_y, right - origin_x, bottom - origin_y)
+                    )
+                    result = await asyncio.to_thread(context.ocr.extract_text, crop)
+                    desktop_region = ScreenRegion(
+                        local.left + origin_x, local.top + origin_y,
+                        local.right + origin_x, local.bottom + origin_y,
+                    )
+                    result["elements"] = translate_elements(
+                        result.get("elements", []), desktop_region,
+                        surface="foreground_window", container_id=target.window_id, window_title=target.title,
+                    )
+                    result["observation_target"] = {"window_id": target.window_id, "title": target.title, "rect": target.rect}
+                    return result
 
             async def read_accessibility():
                 with context.benchmark.measure("uia_perception"):
@@ -282,7 +303,8 @@ class ActState(BaseState):
         return StateType.ACT
 
     async def enter(self, context: StateContext) -> None:
-        context.notify(f"Entering ACT state: Executing '{context.proposed_action.action_type.value}'.", self.state_type.value)  # type: ignore
+        action_name = context.proposed_action.action_type.value if context.proposed_action else "None"
+        context.notify(f"Entering ACT state: Executing '{action_name}'.", self.state_type.value)
 
     async def execute(self, context: StateContext) -> Optional[StateType]:
         assert context.proposed_action is not None

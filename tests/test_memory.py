@@ -17,7 +17,7 @@ def test_sqlite_schema_creation():
         db_path = Path(tmpdir) / "test_memory.db"
         db = DatabaseManager(str(db_path))
 
-        with db.get_connection() as conn:
+        with db.connection_scope() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT name FROM sqlite_master WHERE type='table';")
             tables = {row[0] for row in cursor.fetchall()}

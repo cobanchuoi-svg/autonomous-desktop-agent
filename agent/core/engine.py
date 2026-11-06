@@ -29,6 +29,8 @@ from agent.core.benchmark import Benchmark
 from agent.decision.goal_classifier import GoalClassifier
 from agent.decision.module_router import ModuleRouter
 from agent.models.execution import Evidence, ExecutionResult, confidence_from_evidence
+from agent.vision.observation_target import ObservationTarget, ObservationTargetSelector
+from agent.vision.roi import ScreenRegion, crop_region, translate_elements
 
 
 class AgentEngine:
@@ -59,6 +61,7 @@ class AgentEngine:
         self.last_execution_result: Optional[ExecutionResult] = None
         self._benchmark = Benchmark()
         self._workflow_runtime = None
+        self._observation_selector = ObservationTargetSelector()
 
         # Build FSM Context
         self.context = StateContext(
@@ -83,6 +86,86 @@ class AgentEngine:
     def add_step_callback(self, cb: Callable[[str, str], None]) -> None:
         """Register callback for UI updates: cb(log_message, current_state_name)."""
         self._step_callbacks.append(cb)
+
+    def configure_session_provider(self, provider_name: str, *, gemini_api_key: Optional[str] = None) -> None:
+        """Select an LLM for this running process without writing credentials to disk.
+
+        The dashboard calls this before a request begins. Existing provider and
+        workflow instances are discarded so the next request starts from the
+        explicitly selected configuration.
+        """
+        provider = provider_name.strip().casefold()
+        if provider not in {"ollama", "gemini"}:
+            raise ValueError("Only 'ollama' and 'gemini' can be selected from the dashboard.")
+        if provider == "gemini" and not (gemini_api_key or "").strip():
+            raise ValueError("A Gemini API key is required when Gemini is selected.")
+
+        self.config.llm.provider = provider
+        if provider == "gemini":
+            # Intentionally session-only: do not persist supplied keys to JSON.
+            self.config.llm.gemini_api_key = gemini_api_key.strip()  # type: ignore[union-attr]
+
+        self.context.brain = None
+        self.context.planner = None
+        self.context.teacher = None
+        self.brain_client = None
+        self.qwen_client = None
+        self._workflow_runtime = None
+        logger.info(f"[AgentEngine] Session LLM provider selected: {provider}")
+
+    def list_observation_targets(self) -> list[ObservationTarget]:
+        """Return selectable visible windows. This does not capture or OCR them."""
+        return self._observation_selector.list_targets()
+
+    def select_observation_target(self, window_id: Optional[str]) -> Optional[ObservationTarget]:
+        """Set focused OCR target; None explicitly restores full-screen OCR."""
+        if window_id is None:
+            self.context.observation_target = None
+            return None
+        target = self._observation_selector.focus(window_id)
+        if target is None:
+            raise ValueError("Selected target is unavailable or Windows did not grant focus.")
+        self.context.observation_target = target
+        logger.info(f"[AgentEngine] OCR observation target selected: {target.window_id} ({target.title!r})")
+        return target
+
+    def capture_and_ocr(self):
+        """Capture full screen, then OCR only the selected window ROI when set.
+
+        Full frame coordinates are retained for verifier compatibility.  OCR
+        elements from an ROI are translated back to desktop coordinates.
+        """
+        target = self.context.observation_target
+        if target is not None:
+            # The Dashboard becomes foreground when the user presses Send.
+            # Restore the explicitly selected app immediately before capture;
+            # otherwise the agent would OCR its own chat window instead.
+            focused = self._observation_selector.focus(target.window_id)
+            if focused is None:
+                raise RuntimeError("Selected OCR target is no longer available or could not be focused.")
+            self.context.observation_target = focused
+            target = focused
+        frame = self.capture.capture_frame()
+        if target is None:
+            return frame, self.ocr.extract_text(frame)
+        origin_x, origin_y = self.capture.last_frame_origin()
+        left, top, right, bottom = target.rect
+        local_region = ScreenRegion(left - origin_x, top - origin_y, right - origin_x, bottom - origin_y)
+        cropped, actual_local = crop_region(frame, local_region)
+        data = self.ocr.extract_text(cropped)
+        desktop_region = ScreenRegion(
+            actual_local.left + origin_x, actual_local.top + origin_y,
+            actual_local.right + origin_x, actual_local.bottom + origin_y,
+        )
+        data["elements"] = translate_elements(
+            data.get("elements", []), desktop_region,
+            surface="foreground_window", container_id=target.window_id, window_title=target.title,
+        )
+        data["observation_target"] = {
+            "window_id": target.window_id, "title": target.title,
+            "rect": target.rect,
+        }
+        return frame, data
 
     def _on_context_event(self, message: str, state_name: str) -> None:
         for cb in self._step_callbacks:

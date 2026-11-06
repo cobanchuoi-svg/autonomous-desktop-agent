@@ -47,6 +47,8 @@ class AgentDashboard:
         self._busy = False
         self._chat_active = False
         self._chat_cancelled = threading.Event()
+        self._provider_selected = False
+        self._target_labels: dict[str, Optional[str]] = {"Full screen (default)": None}
         self._placeholder = "Nhập lệnh..."
         self._placeholder_active = False
 
@@ -60,8 +62,7 @@ class AgentDashboard:
         self._append_message(
             "Agent",
             "Chào bạn! 👋 Mình là Desktop AI Agent.\n"
-            "Mình có thể giúp bạn mở ứng dụng, tìm kiếm Google, đọc màn hình bằng OCR, hoặc gõ văn bản tự động.\n"
-            "Bạn cần mình hỗ trợ việc gì nào?"
+            "Hãy chọn AI provider trước khi bắt đầu: Ollama chạy local, hoặc Gemini API."
         )
 
     def _build_ui(self) -> None:
@@ -81,6 +82,12 @@ class AgentDashboard:
             )
             self.chat_box.pack(fill="both", expand=True, padx=14, pady=12)
             self.chat_box.configure(state="disabled")
+
+            self.provider_frame = ctk.CTkFrame(self.root)
+            self.provider_frame.pack(fill="x", padx=14, pady=(0, 8))
+
+            self.target_frame = ctk.CTkFrame(self.root)
+            self.target_frame.pack(fill="x", padx=14, pady=(0, 8))
 
             input_frame = ctk.CTkFrame(self.root, fg_color="transparent")
             input_frame.pack(fill="x", padx=14, pady=(0, 14))
@@ -124,6 +131,12 @@ class AgentDashboard:
             self.chat_box.pack(side="left", fill="both", expand=True)
             scrollbar.configure(command=self.chat_box.yview)
 
+            self.provider_frame = tk.Frame(self.root)
+            self.provider_frame.pack(fill="x", padx=14, pady=(0, 8))
+
+            self.target_frame = tk.Frame(self.root)
+            self.target_frame.pack(fill="x", padx=14, pady=(0, 8))
+
             input_frame = tk.Frame(self.root)
             input_frame.pack(fill="x", padx=14, pady=(0, 14))
             self.command_input = tk.Entry(input_frame, font=("Segoe UI", 11))
@@ -142,8 +155,157 @@ class AgentDashboard:
             self.stop_btn.pack(side="right", padx=(0, 8))
 
         self.command_input.bind("<Return>", self._on_enter)
+        self._show_provider_choices()
+        self._build_target_selector()
+        self._set_busy(False)
         if CTK_AVAILABLE:
-            self.command_input.focus_set()
+            self.provider_frame.focus_set()
+
+    def _clear_provider_frame(self) -> None:
+        for child in self.provider_frame.winfo_children():
+            child.destroy()
+
+    def _build_target_selector(self) -> None:
+        """User chooses the window to OCR; no OCR runs while listing choices."""
+        for child in self.target_frame.winfo_children():
+            child.destroy()
+        self._target_labels = {"Full screen (default)": None}
+        if CTK_AVAILABLE:
+            ctk.CTkLabel(self.target_frame, text="OCR target:").pack(side="left", padx=(12, 8), pady=6)
+            self.target_choice = ctk.CTkOptionMenu(
+                self.target_frame, values=list(self._target_labels), width=260
+            )
+            self.target_choice.pack(side="left", fill="x", expand=True, padx=4, pady=6)
+            ctk.CTkButton(self.target_frame, text="Refresh", width=75, command=self._refresh_targets).pack(side="left", padx=4, pady=6)
+            ctk.CTkButton(self.target_frame, text="Focus for OCR", width=110, command=self._apply_target).pack(side="left", padx=(0, 8), pady=6)
+        else:
+            tk.Label(self.target_frame, text="OCR target:").pack(side="left", padx=(0, 8), pady=4)
+            self.target_value = tk.StringVar(value="Full screen (default)")
+            self.target_choice = tk.OptionMenu(self.target_frame, self.target_value, *self._target_labels)
+            self.target_choice.pack(side="left", fill="x", expand=True, padx=4, pady=4)
+            tk.Button(self.target_frame, text="Refresh", command=self._refresh_targets).pack(side="left", padx=3, pady=4)
+            tk.Button(self.target_frame, text="Focus for OCR", command=self._apply_target).pack(side="left", padx=(0, 4), pady=4)
+
+    def _refresh_targets(self) -> None:
+        targets = self.engine.list_observation_targets()
+        self._target_labels = {"Full screen (default)": None}
+        for target in targets:
+            label = f"{target.title[:70]} [{target.window_id}]"
+            self._target_labels[label] = target.window_id
+        values = list(self._target_labels)
+        if CTK_AVAILABLE:
+            self.target_choice.configure(values=values)
+            self.target_choice.set(values[0])
+        else:
+            menu = self.target_choice["menu"]
+            menu.delete(0, "end")
+            for value in values:
+                menu.add_command(label=value, command=tk._setit(self.target_value, value))
+            self.target_value.set(values[0])
+        self._append_message("Agent", f"Đã tìm thấy {len(targets)} cửa sổ có thể chọn cho Windows OCR.")
+
+    def _apply_target(self) -> None:
+        label = self.target_choice.get() if CTK_AVAILABLE else self.target_value.get()
+        try:
+            target = self.engine.select_observation_target(self._target_labels.get(label))
+        except Exception as exc:
+            self._append_message("Agent", f"❌ Không thể focus OCR target: {exc}")
+            return
+        if target is None:
+            self._append_message("Agent", "OCR target đã đặt về full screen.")
+        else:
+            self._append_message("Agent", f"✅ Windows OCR sẽ chỉ đọc: {target.title}")
+
+    def _show_provider_choices(self) -> None:
+        """Show explicit local/cloud choice before allowing chat requests."""
+        self._clear_provider_frame()
+        if CTK_AVAILABLE:
+            ctk.CTkLabel(self.provider_frame, text="Chọn AI provider cho phiên này:").pack(
+                side="left", padx=(12, 8), pady=8
+            )
+            ctk.CTkButton(
+                self.provider_frame, text="Ollama (Local)", width=130,
+                command=self._select_ollama,
+            ).pack(side="left", padx=4, pady=8)
+            ctk.CTkButton(
+                self.provider_frame, text="Gemini API", width=120,
+                command=self._show_gemini_key_input,
+            ).pack(side="left", padx=4, pady=8)
+        else:
+            tk.Label(self.provider_frame, text="Chọn AI provider cho phiên này:").pack(
+                side="left", padx=(0, 8), pady=6
+            )
+            tk.Button(self.provider_frame, text="Ollama (Local)", command=self._select_ollama).pack(
+                side="left", padx=3, pady=6
+            )
+            tk.Button(self.provider_frame, text="Gemini API", command=self._show_gemini_key_input).pack(
+                side="left", padx=3, pady=6
+            )
+
+    def _show_gemini_key_input(self) -> None:
+        """Request the key in a masked control; it is never rendered in chat."""
+        self._clear_provider_frame()
+        if CTK_AVAILABLE:
+            ctk.CTkLabel(self.provider_frame, text="Gemini API key (chỉ dùng phiên này):").pack(
+                side="left", padx=(12, 8), pady=8
+            )
+            self.gemini_key_input = ctk.CTkEntry(self.provider_frame, show="*", width=260)
+            self.gemini_key_input.pack(side="left", fill="x", expand=True, padx=4, pady=8)
+            ctk.CTkButton(self.provider_frame, text="Use Gemini", width=110, command=self._select_gemini).pack(
+                side="left", padx=4, pady=8
+            )
+            ctk.CTkButton(self.provider_frame, text="Back", width=65, command=self._show_provider_choices).pack(
+                side="left", padx=(0, 8), pady=8
+            )
+        else:
+            tk.Label(self.provider_frame, text="Gemini API key (chỉ dùng phiên này):").pack(
+                side="left", padx=(0, 8), pady=6
+            )
+            self.gemini_key_input = tk.Entry(self.provider_frame, show="*")
+            self.gemini_key_input.pack(side="left", fill="x", expand=True, padx=4, pady=6)
+            tk.Button(self.provider_frame, text="Use Gemini", command=self._select_gemini).pack(side="left", padx=3, pady=6)
+            tk.Button(self.provider_frame, text="Back", command=self._show_provider_choices).pack(side="left", padx=3, pady=6)
+        self.gemini_key_input.focus_set()
+
+    def _select_ollama(self) -> None:
+        try:
+            self.engine.configure_session_provider("ollama")
+        except Exception as exc:
+            self._append_message("Agent", f"❌ Không thể chọn Ollama: {exc}")
+            return
+        self._finish_provider_choice("Ollama local", "Đã chọn Ollama local. Hãy chắc rằng `ollama serve` đang chạy.")
+
+    def _select_gemini(self) -> None:
+        key = self.gemini_key_input.get().strip()
+        try:
+            self.engine.configure_session_provider("gemini", gemini_api_key=key)
+        except Exception as exc:
+            self._append_message("Agent", f"❌ Không thể chọn Gemini: {exc}")
+            return
+        self._finish_provider_choice("Gemini API", "Đã chọn Gemini API cho phiên này. API key không được lưu vào config.")
+
+    def _finish_provider_choice(self, provider_label: str, message: str) -> None:
+        self._provider_selected = True
+        self._clear_provider_frame()
+        if CTK_AVAILABLE:
+            ctk.CTkLabel(self.provider_frame, text=f"Provider: {provider_label}").pack(
+                side="left", padx=12, pady=8
+            )
+            ctk.CTkButton(self.provider_frame, text="Change", width=75, command=self._change_provider).pack(
+                side="right", padx=8, pady=6
+            )
+        else:
+            tk.Label(self.provider_frame, text=f"Provider: {provider_label}").pack(side="left", padx=4, pady=6)
+            tk.Button(self.provider_frame, text="Change", command=self._change_provider).pack(side="right", padx=4, pady=4)
+        self._append_message("Agent", message)
+        self._set_busy(False)
+
+    def _change_provider(self) -> None:
+        if self._busy:
+            return
+        self._provider_selected = False
+        self._show_provider_choices()
+        self._set_busy(False)
 
     def _append_message(self, speaker: str, text: str) -> None:
         def update() -> None:
@@ -168,7 +330,7 @@ class AgentDashboard:
 
     def _set_busy(self, busy: bool) -> None:
         self._busy = busy
-        state = "disabled" if busy else "normal"
+        state = "disabled" if busy or not self._provider_selected else "normal"
         if CTK_AVAILABLE:
             self.send_btn.configure(state=state)
             self.file_btn.configure(state=state)
@@ -204,6 +366,9 @@ class AgentDashboard:
     def send_message(self) -> None:
         if self._busy:
             return
+        if not self._provider_selected:
+            self._append_message("Agent", "Hãy chọn Ollama hoặc Gemini API trước khi gửi yêu cầu.")
+            return
         goal = self.command_input.get().strip()
         if not goal or self._placeholder_active or goal == self._placeholder:
             return
@@ -227,6 +392,9 @@ class AgentDashboard:
         )
         if not path:
             return
+        if hasattr(self.engine, "_workflow_runtime") and self.engine._workflow_runtime is not None:
+            self.engine._workflow_runtime.last_document_path = path
+            self.engine._workflow_runtime.router.last_document_path = path
         self._submit_goal(f'quét "{path}" và để WPS chạy nền')
 
     def _submit_goal(self, goal: str) -> None:
@@ -403,8 +571,7 @@ class AgentDashboard:
         text = ""
         error_text = ""
         try:
-            frame = self.engine.capture.capture_frame()
-            result = self.engine.ocr.extract_text(frame)
+            _frame, result = self.engine.capture_and_ocr()
             text = result.get("full_text", "").strip()
         except Exception as exc:
             error_text = str(exc)

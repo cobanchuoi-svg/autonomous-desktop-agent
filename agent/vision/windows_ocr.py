@@ -104,11 +104,28 @@ class WindowsMediaOCRProcessor(BaseOCRProcessor):
 
         elements: List[UIElement] = []
         lines_text: List[str] = []
+        line_elements: List[UIElement] = []
 
         for line in ocr_result.lines:
             line_str = line.text.strip()
             if line_str:
                 lines_text.append(line_str)
+            if line.words:
+                lx_min = min(int(w.bounding_rect.x) for w in line.words)
+                ly_min = min(int(w.bounding_rect.y) for w in line.words)
+                lx_max = max(int(w.bounding_rect.x + w.bounding_rect.width) for w in line.words)
+                ly_max = max(int(w.bounding_rect.y + w.bounding_rect.height) for w in line.words)
+                line_elements.append(
+                    UIElement(
+                        text=line_str,
+                        confidence=1.0,
+                        bbox=(lx_min, ly_min, lx_max, ly_max),
+                        center_x=(lx_min + lx_max) // 2,
+                        center_y=(ly_min + ly_max) // 2,
+                        source="windows_ocr_line",
+                        surface="desktop",
+                    )
+                )
             for word in line.words:
                 w_text = word.text.strip()
                 if not w_text:
@@ -133,7 +150,25 @@ class WindowsMediaOCRProcessor(BaseOCRProcessor):
                     )
                 )
 
-        full_text = ocr_result.text or "\n".join(lines_text)
+        table_rows_list = []
+        try:
+            from agent.brain.spatial_mapping import SpatialElement, cluster_rows
+            if line_elements:
+                sp_lines = [SpatialElement.from_bbox(e.text, e.bbox) for e in line_elements]
+                clustered = cluster_rows(sp_lines)
+                if len(clustered) >= 2 or (len(clustered) == 1 and len(clustered[0]) >= 2):
+                    table_rows = []
+                    for row_els in clustered:
+                        sorted_row = sorted(row_els, key=lambda el: el.bbox.left)
+                        table_rows.append("\t".join(el.text for el in sorted_row))
+                        table_rows_list.append([el.text for el in sorted_row])
+                    full_text = "\n".join(table_rows)
+                else:
+                    full_text = "\n".join(lines_text) if lines_text else (ocr_result.text or "")
+            else:
+                full_text = "\n".join(lines_text) if lines_text else (ocr_result.text or "")
+        except Exception:
+            full_text = "\n".join(lines_text) if lines_text else (ocr_result.text or "")
         duration_ms = (time.perf_counter() - t0) * 1000
 
         logger.debug(f"[WindowsOCR] Extracted {len(elements)} words ({len(full_text)} chars) in {duration_ms:.2f}ms")
@@ -142,6 +177,7 @@ class WindowsMediaOCRProcessor(BaseOCRProcessor):
             "full_text": full_text,
             "elements": elements,
             "lines": lines_text,
+            "rows": table_rows_list,
             "engine": "windows_media_ocr",
             "duration_ms": duration_ms,
         }

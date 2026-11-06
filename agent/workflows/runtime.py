@@ -27,8 +27,44 @@ class WorkflowRuntime:
         self._response_language: Optional[str] = None
         self._pending_text_write: Optional[dict[str, Any]] = None
         self._pending_script_draft: Optional[dict[str, Any]] = None
+        self._pending_ocr_write: Optional[dict[str, Any]] = None  # OCR preview before WPS write
 
     async def handle(self, message: str, on_chat_start: Any = None, on_chat_token: Any = None) -> tuple[WorkflowRequest, WorkflowResult]:
+        # ── OCR write review: ghi vao / huy ──
+        if self._pending_ocr_write is not None:
+            cmd = re.sub(r"\s+", " ", message.strip().casefold())
+            confirm_rx = r"(?:ghi v[aà]o|ghi|write it|ok(?: ghi)?|d[uo]ng y|duyet|dong y|confirm|yes)"
+            cancel_rx  = r"(?:h[uU]y|bo|cancel|no|thoi|discard)"
+            if re.fullmatch(confirm_rx, cmd):
+                pending = self._pending_ocr_write
+                self._pending_ocr_write = None
+                from agent.actions.window_layout import DocumentWindowController
+                from agent.actions.image_clipboard import copy_image_content_to_wps
+                copied = await asyncio.to_thread(
+                    copy_image_content_to_wps,
+                    pending["text"],
+                    wps_title=pending["wps_title"],
+                    window_controller=DocumentWindowController(),
+                )
+                req = WorkflowRequest("COPY_IMAGE_CONTENT_TO_WPS", 1.0, {"image_path": pending["image_path"]}, "MATCH", None, "user_approval")
+                if copied.success:
+                    return req, WorkflowResult("COPY_IMAGE_CONTENT_TO_WPS", True, f"Da ghi {len(pending['text'].splitlines())} dong vao {pending['wps_title']}.")
+                return req, WorkflowResult("COPY_IMAGE_CONTENT_TO_WPS", False, copied.message, error=copied.message)
+            if re.fullmatch(cancel_rx, cmd):
+                self._pending_ocr_write = None
+                req = WorkflowRequest("COPY_IMAGE_CONTENT_TO_WPS", 1.0, {}, "MATCH", None, "user_cancel")
+                return req, WorkflowResult("COPY_IMAGE_CONTENT_TO_WPS", True, "Da huy. Khong ghi gi vao WPS ca.")
+            # If the user enters a new command, clear pending OCR review and continue!
+            is_new_cmd = bool(
+                re.match(r"^\s*(?:quét|scan|xuất|xuat|export|chuyển|chuyen|mở|open|bật|chép|chep|copy|lưu|luu)\b", message, re.IGNORECASE)
+                or self.router._extract_document_path(message)
+            )
+            if is_new_cmd:
+                self._pending_ocr_write = None
+            else:
+                q = "OCR dang cho xac nhan. Goi **'ghi vao'** de ghi, **'huy'** de bo qua."
+                return WorkflowRequest("CLARIFY", 1.0, {}, "CLARIFY", q, "local_rule"), WorkflowResult("CLARIFY", True, q)
+
         # 1. Handle pending Python script execution approval
         if self._pending_script_draft is not None:
             cmd = re.sub(r"\s+", " ", message.strip().casefold())
@@ -91,12 +127,16 @@ class WorkflowRuntime:
         original_message = message
         pending_goal = None
         if self._pending_clarification is not None:
-            pending_goal, question = self._pending_clarification
-            self._pending_clarification = None
-            message = (
-                f"Continue the user's earlier request. Original request: {pending_goal}\n"
-                f"Clarification question asked: {question}\nUser's clarification: {message}"
+            has_new_command = bool(
+                re.match(r"^\s*(?:quét|scan|mở|open|bật|chép|copy|đưa|tạo|create)\b", message, re.IGNORECASE)
+                or self.router._extract_document_path(message)
             )
+            if has_new_command:
+                self._pending_clarification = None
+            else:
+                pending_goal, question = self._pending_clarification
+                self._pending_clarification = None
+                message = f"{pending_goal} {message}"
         request = await self.router.route(message)
         if request.status == "CLARIFY":
             question = request.clarification_question or "Could you clarify what you want me to do?"
@@ -180,6 +220,8 @@ class WorkflowRuntime:
             )
         if spec.handler == "scan_document":
             document_path = str(params["document_path"]).strip()
+            self.last_document_path = document_path
+            self.router.last_document_path = document_path
             wps_title = str(params.get("wps_title") or "WPS").strip()
             from agent.core.document_agent import DocumentAgent
 
@@ -227,6 +269,138 @@ class WorkflowRuntime:
                 f"{analysis.message}\nĐã chép ảnh vào {wps_title}.",
                 {"analysis": analysis.analysis, "copy": copied},
             )
+        if spec.handler == "copy_image_content_to_wps":
+            from agent.core.document_agent import DocumentAgent
+            from agent.actions.window_layout import DocumentWindowController
+            from agent.actions.image_clipboard import copy_image_content_to_wps
+
+            image_path = str(params.get("image_path") or "").strip()
+            if not image_path or image_path == "__last_document__":
+                image_path = self.last_document_path or (getattr(self.router, "last_document_path", None) or "")
+            if not image_path:
+                return WorkflowResult(name, False, "Chưa có file ảnh/tài liệu nào được chọn để chép nội dung.", error="missing_image_path")
+            self.last_document_path = image_path
+            self.router.last_document_path = image_path
+            wps_title = str(params.get("wps_title") or "WPS").strip()
+
+            # ── If this is an OCR-review pending confirmation, commit immediately ──
+            if self._pending_ocr_write is not None and self._pending_ocr_write.get("image_path") == image_path:
+                ocr_text = self._pending_ocr_write["text"]
+                self._pending_ocr_write = None
+                copied = await asyncio.to_thread(
+                    copy_image_content_to_wps,
+                    ocr_text,
+                    wps_title=wps_title,
+                    window_controller=DocumentWindowController(),
+                )
+                if not copied.success:
+                    return WorkflowResult(name, False, copied.message, {}, copied.message)
+                return WorkflowResult(name, True, f"Da ghi {len(ocr_text.splitlines())} dong vao {wps_title}.", {"copy": copied})
+
+            coordinator = DocumentAgent(
+                capture=self.engine.capture,
+                ocr=self.engine.ocr,
+                brain=self.engine.brain_client,
+                memory=getattr(self.engine, "memory", None),
+            )
+            analysis = await coordinator.scan(image_path, wps_title=wps_title)
+            if not analysis.success:
+                return WorkflowResult(name, False, analysis.message, {"analysis": analysis.analysis}, analysis.error)
+            ocr_text = str(analysis.ocr.get("full_text", "")).strip()
+            if not ocr_text:
+                return WorkflowResult(name, False, "OCR khong tim thay chu nao trong tai lieu.", {"analysis": analysis.analysis})
+
+            # ── Show preview and ask user to confirm before writing ──
+            preview_lines = ocr_text.splitlines()
+            preview_short = "\n".join(preview_lines[:15])
+            if len(preview_lines) > 15:
+                preview_short += f"\n... (con {len(preview_lines) - 15} dong nua)"
+            self._pending_ocr_write = {
+                "image_path": image_path,
+                "text": ocr_text,
+                "wps_title": wps_title,
+                "analysis": analysis,
+            }
+            preview_msg = (
+                f"OCR doc duoc {len(preview_lines)} dong tu **{image_path.split(chr(47))[-1].split(chr(92))[-1]}**:\n\n"
+                f"```\n{preview_short}\n```\n\n"
+                f"Noi dung tren co chinh xac khong? Gap **'ghi vao'** de ghi vao {wps_title}, "
+                f"hoac **'huy'** de bo qua."
+            )
+            return WorkflowResult(name, True, preview_msg, {"analysis": analysis.analysis, "ocr_preview": preview_short})
+        if spec.handler == "export_ocr_to_excel":
+            from agent.core.document_agent import DocumentAgent
+            from agent.actions.excel_generator import generate_excel_from_ocr
+            import time
+
+            image_path = str(params.get("image_path") or "").strip()
+            if not image_path:
+                image_path = self.last_document_path or ""
+            if not image_path:
+                return WorkflowResult(name, False, "Chua co file nao duoc chon.", error="missing_path")
+
+            self.last_document_path = image_path
+            self.router.last_document_path = image_path
+
+            from pathlib import Path
+            stem = Path(image_path).stem
+            output_path = str(params.get("output_path") or "").strip()
+            if not output_path:
+                # Dedicated clean export folder for all exports
+                export_dir = Path.home() / "Downloads" / "Agent_Exports"
+                export_dir.mkdir(parents=True, exist_ok=True)
+                time_tag = time.strftime("%Y%m%d_%H%M%S")
+                output_path = str(export_dir / f"{stem}_{time_tag}.xlsx")
+            else:
+                export_dir = Path(output_path).parent
+                export_dir.mkdir(parents=True, exist_ok=True)
+
+            sheet_name = str(params.get("sheet_name") or "OCR Data").strip()
+
+            coordinator = DocumentAgent(
+                capture=self.engine.capture,
+                ocr=self.engine.ocr,
+                brain=self.engine.brain_client,
+                memory=getattr(self.engine, "memory", None),
+            )
+            analysis = await coordinator.scan(image_path, wps_title="")
+            if not analysis.success:
+                return WorkflowResult(name, False, analysis.message, {"analysis": analysis.analysis}, analysis.error)
+
+            from agent.actions.excel_generator import generate_csv_from_ocr
+
+            csv_path = str(Path(output_path).with_suffix(".csv"))
+            result = await asyncio.to_thread(
+                generate_excel_from_ocr,
+                analysis.ocr,
+                output_path,
+                sheet_name,
+            )
+            csv_result = await asyncio.to_thread(
+                generate_csv_from_ocr,
+                analysis.ocr,
+                csv_path,
+            )
+
+            if not result.get("success") and not csv_result.get("success"):
+                return WorkflowResult(name, False, result.get("message") or csv_result.get("message"), error="export_failed")
+
+            rows_n = result.get('rows_written') or csv_result.get('rows_written', 0)
+            msg_parts = [
+                f"✅ **Đã xuất thành công {rows_n} dòng dữ liệu từ ảnh!**",
+                f"📁 **Thư mục lưu trữ:** `{export_dir}`",
+            ]
+            if result.get("success"):
+                msg_parts.append(f"- 📊 **Excel (.xlsx):** `{Path(output_path).name}`")
+            if csv_result.get("success"):
+                msg_parts.append(f"- 📄 **CSV (UTF-8 có BOM):** `{Path(csv_path).name}`")
+            msg_parts.append("\n💡 Bạn có thể mở trực tiếp thư mục `Agent_Exports` trong Downloads để sử dụng ngay.")
+
+            return WorkflowResult(
+                name, True,
+                "\n".join(msg_parts),
+                {"export_excel": result, "export_csv": csv_result, "export_dir": str(export_dir), "analysis": analysis.analysis},
+            )
         if spec.handler == "web_search":
             query = str(params["query"]).strip()
             if not query or len(query) > 500:
@@ -250,8 +424,7 @@ class WorkflowRuntime:
                 str(params.get("window_title") or "").strip() or None,
             )
         if spec.handler == "read_screen":
-            frame = await asyncio.to_thread(self.engine.capture.capture_frame)
-            data = await asyncio.to_thread(self.engine.ocr.extract_text, frame)
+            _frame, data = await asyncio.to_thread(self.engine.capture_and_ocr)
             text = str(data.get("full_text", "")).strip()
             return WorkflowResult(name, bool(text), text or "No visible text was detected.", {"ocr": data}, None if text else "no_text_detected")
         if spec.handler == "fsm_task":

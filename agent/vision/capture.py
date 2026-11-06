@@ -36,6 +36,7 @@ class ScreenCapture(BaseScreenCapture):
         self._is_capturing = False
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        self._last_frame_origin: tuple[int, int] = (0, 0)
 
     def get_monitors(self) -> List[Dict[str, int]]:
         """Return available monitor dimensions."""
@@ -53,18 +54,21 @@ class ScreenCapture(BaseScreenCapture):
                     with mss.mss() as sct:
                         monitor = sct.monitors[min(self.monitor_index, len(sct.monitors) - 1)]
                         sct_img = sct.grab(monitor)
+                        self._last_frame_origin = (int(monitor["left"]), int(monitor["top"]))
                         # Convert to PIL Image (RGB)
                         img = Image.frombytes("RGB", sct_img.size, sct_img.bgra, "raw", "BGRX")
                 except Exception as mss_err:
                     logger.warning(f"[ScreenCapture] MSS capture failed ({mss_err}), falling back to ImageGrab.")
                     try:
                         img = ImageGrab.grab()
+                        self._last_frame_origin = (0, 0)
                     except Exception as grab_err:
                         logger.warning(f"[ScreenCapture] ImageGrab failed ({grab_err}).")
 
             if img is None:
                 try:
                     img = ImageGrab.grab()
+                    self._last_frame_origin = (0, 0)
                 except Exception:
                     pass
 
@@ -80,6 +84,10 @@ class ScreenCapture(BaseScreenCapture):
             return img
         except Exception as e:
             raise VisionException(f"Screen capture failed: {e}") from e
+
+    def last_frame_origin(self) -> tuple[int, int]:
+        """Desktop coordinate represented by pixel (0, 0) of the latest frame."""
+        return self._last_frame_origin
 
     def get_latest_frame(self) -> Image.Image:
         """Get the latest buffered frame, capturing one if none exists."""

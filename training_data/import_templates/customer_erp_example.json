@@ -1,0 +1,13 @@
+{
+  "target_system": "customer_erp_example",
+  "format": "csv",
+  "delimiter": ",",
+  "encoding": "utf-8-sig",
+  "mappings": [
+    {"target_column": "InvoiceNumber", "source_field": "invoice_no", "required": true},
+    {"target_column": "InvoiceDate", "source_field": "invoice_date", "required": true, "date_format": "%Y-%m-%d"},
+    {"target_column": "Supplier", "source_field": "shipper", "required": false},
+    {"target_column": "Currency", "source_field": "currency", "required": true},
+    {"target_column": "Amount", "source_field": "total_amount", "required": true, "decimal_places": 2}
+  ]
+}

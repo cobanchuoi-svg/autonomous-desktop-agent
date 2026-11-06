@@ -23,6 +23,7 @@ from agent.actions.dispatcher import ActionDispatcher
 from agent.core.benchmark import Benchmark
 from agent.models.desktop_state import DesktopState, DesktopStateManager
 from agent.actions.ui_automation import WindowsUIAutomationController
+from agent.vision.observation_target import ObservationTarget
 
 
 class StateContext:
@@ -71,6 +72,9 @@ class StateContext:
         self.desktop_state_manager = DesktopStateManager()
         self.desktop_state: DesktopState = self.desktop_state_manager.current
         self.ui_automation = WindowsUIAutomationController()
+        # Optional user-selected window. OCR uses this region, while the full
+        # frame remains available for global click verification.
+        self.observation_target: Optional[ObservationTarget] = None
         self.benchmark = Benchmark()
 
         # Cognitive & verification artifacts

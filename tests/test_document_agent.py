@@ -1,8 +1,9 @@
 import pytest
+from PIL import Image
 
 from agent.brain.brain_client import BrainClient
 from agent.brain.spatial_mapping import SpatialElement
-from agent.core.document_agent import DocumentAgent
+from agent.core.document_agent import DocumentAgent, DocumentEyes, DocumentHands
 from agent.llm.mock_provider import MockLLMProvider
 
 
@@ -12,7 +13,10 @@ class FakeCapture:
 
 
 class FakeOCR:
+    last_frame = None
+
     def extract_text(self, frame):
+        self.last_frame = frame
         return {
             "full_text": "Name Amount Alice 10",
             "elements": [
@@ -41,3 +45,40 @@ async def test_document_agent_unifies_layout_eyes_ocr_and_brain():
     assert result.success
     assert result.analysis.status.value == "PASS"
     assert result.analysis.ai_required is False
+    assert isinstance(agent.eyes, DocumentEyes)
+    assert isinstance(agent.hands, DocumentHands)
+
+
+@pytest.mark.asyncio
+async def test_image_scan_ocr_reads_file_not_photo_viewer_toolbar(tmp_path):
+    image_path = tmp_path / "source.jpg"
+    Image.new("RGB", (20, 20), "white").save(image_path)
+    ocr = FakeOCR()
+    agent = DocumentAgent(
+        capture=FakeCapture(),
+        ocr=ocr,
+        brain=BrainClient(MockLLMProvider()),
+        window_controller=FakeWindowController(),
+    )
+    result = await agent.scan(str(image_path))
+    assert result.success
+    assert getattr(ocr.last_frame, "size", None) == (20, 20)
+
+@pytest.mark.asyncio
+async def test_pdf_scan_in_memory_renders_pdf_directly(tmp_path):
+    pdf_path = tmp_path / "test_doc.pdf"
+    img1 = Image.new("RGB", (60, 60), "white")
+    img2 = Image.new("RGB", (60, 60), "white")
+    img1.save(pdf_path, "PDF", save_all=True, append_images=[img2])
+
+    ocr = FakeOCR()
+    agent = DocumentAgent(
+        capture=FakeCapture(),
+        ocr=ocr,
+        brain=BrainClient(MockLLMProvider()),
+        window_controller=FakeWindowController(),
+    )
+    result = await agent.scan(str(pdf_path))
+    assert result.success
+    assert result.ocr.get("pages") == 2
+    assert getattr(ocr.last_frame, "size", None) is not None
